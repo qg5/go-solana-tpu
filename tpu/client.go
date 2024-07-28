@@ -10,8 +10,8 @@ import (
 
 	"github.com/blocto/solana-go-sdk/types"
 	"github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/mr-tron/base58"
+	"github.com/qg5/go-solana-tpu/literpc"
 	"github.com/qg5/go-solana-tpu/quic"
 )
 
@@ -41,7 +41,7 @@ const (
 )
 
 type TPUClient struct {
-	conn   *rpc.Client
+	conn   *literpc.LiteRpcClient
 	config *TPUClientConfig
 	cache  *TPUClientCache
 	mu     sync.Mutex
@@ -57,7 +57,7 @@ type TPUClientConfig struct {
 	MaxRetries int
 
 	// The commitment to be used for the RPC calls (default "confirmed")
-	Commitment rpc.CommitmentType
+	Commitment string
 
 	// Whether you want only nodes with a stake or not (default: false)
 	// This option is experimental as of now
@@ -70,12 +70,14 @@ type TPUClientConfig struct {
 // New creates a new tpu client and calls the Update method
 //
 // TPUClientConfig is configured with default values for maximum optimization.
-func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
+func New(rpcURL string, config *TPUClientConfig) (*TPUClient, error) {
 	config = populateConfig(config)
 
 	if config.FanoutSlots > MAX_FANOUT_SLOTS {
 		return nil, ErrMaxFanoutSlots
 	}
+
+	conn := literpc.New(rpcURL)
 
 	if err := validateCommitment(config.Commitment); err != nil {
 		return nil, err
@@ -112,7 +114,7 @@ func populateConfig(config *TPUClientConfig) *TPUClientConfig {
 	}
 
 	if config.Commitment == "" {
-		config.Commitment = rpc.CommitmentConfirmed
+		config.Commitment = "confirmed"
 	}
 
 	return config
@@ -122,13 +124,13 @@ func defaultConfig() *TPUClientConfig {
 	return &TPUClientConfig{
 		FanoutSlots:    DEFAULT_FANOUT_SLOTS,
 		MaxRetries:     5,
-		Commitment:     rpc.CommitmentConfirmed,
+		Commitment:     "confirmed",
 		OnlyStaked:     false,
 		SkipSimulation: false,
 	}
 }
 
-func validateCommitment(commitment rpc.CommitmentType) error {
+func validateCommitment(commitment string) error {
 	switch commitment {
 	case "processed", "confirmed", "finalized":
 		return nil
@@ -199,14 +201,7 @@ func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 	}
 
 	if !t.config.SkipSimulation {
-		out, err := t.conn.SimulateRawTransactionWithOpts(context.Background(), serializedTx, &rpc.SimulateTransactionOpts{
-			Commitment: t.config.Commitment,
-		})
-
-		if out.Value.Err != nil {
-			return fmt.Errorf("%w: %v", ErrFailedSimulation, out.Value.Err)
-		}
-
+		err := t.conn.SimulateRawTransaction(serializedTx, t.config.Commitment)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrFailedSimulation, err)
 		}
@@ -220,7 +215,7 @@ func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 }
 
 func (t *TPUClient) getEpochInfo() error {
-	epochInfo, err := t.conn.GetEpochInfo(context.Background(), t.config.Commitment)
+	epochInfo, err := t.conn.GetEpochInfo(t.config.Commitment)
 	if err != nil {
 		return err
 	}
@@ -231,7 +226,7 @@ func (t *TPUClient) getEpochInfo() error {
 
 func (t *TPUClient) getLeaderSockets() error {
 	fanout := math.Min(float64(2*t.config.FanoutSlots), float64(t.cache.slotsInEpoch))
-	slotLeaders, err := t.conn.GetSlotLeaders(context.Background(), t.cache.GetCurrentSlot(), uint64(fanout))
+	slotLeaders, err := t.conn.GetSlotLeaders(t.cache.GetCurrentSlot(), uint64(fanout))
 	if err != nil {
 		return err
 	}
@@ -245,7 +240,7 @@ func (t *TPUClient) getLeaderSockets() error {
 }
 
 func (t *TPUClient) getClusterNodes() error {
-	clusters, err := t.conn.GetClusterNodes(context.Background())
+	clusters, err := t.conn.GetClusterNodes()
 	if err != nil {
 		return err
 	}
@@ -257,7 +252,7 @@ func (t *TPUClient) getClusterNodes() error {
 			continue
 		}
 
-		clusterPubKey := cluster.Pubkey.String()
+		clusterPubKey := cluster.Pubkey
 
 		if isStakedCheck {
 			if _, ok := t.cache.stakedPeerNodes[clusterPubKey]; ok {
@@ -272,13 +267,13 @@ func (t *TPUClient) getClusterNodes() error {
 }
 
 func (t *TPUClient) getStakedNodes() error {
-	accounts, err := t.conn.GetVoteAccounts(context.Background(), &rpc.GetVoteAccountsOpts{})
+	accounts, err := t.conn.GetVoteAccounts()
 	if err != nil {
 		return err
 	}
 
 	for _, current := range accounts.Current {
-		t.cache.stakedPeerNodes[current.NodePubkey.String()] = current.ActivatedStake
+		t.cache.stakedPeerNodes[current.NodePubkey] = current.ActivatedStake
 	}
 
 	return nil
@@ -325,7 +320,7 @@ func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 }
 
 func (t *TPUClient) startSlotUpdates() error {
-	startSlot, err := t.conn.GetSlot(context.Background(), t.config.Commitment)
+	startSlot, err := t.conn.GetSlot(t.config.Commitment)
 	if err != nil {
 		return err
 	}
@@ -344,7 +339,7 @@ func (t *TPUClient) startSlotUpdates() error {
 	return nil
 }
 
-func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) []string {
+func (t *TPUClient) filterValidLeaders(slotLeaders []string) []string {
 	var peerLeaderNodes []string
 	seenLeader := make(map[string]struct{}, len(slotLeaders))
 
@@ -353,10 +348,9 @@ func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) []string 
 			break
 		}
 
-		leaderString := leader.String()
-		if _, seen := seenLeader[leaderString]; !seen {
-			seenLeader[leaderString] = struct{}{}
-			if tpuSocket, ok := t.cache.peerNodes[leaderString]; ok {
+		if _, seen := seenLeader[leader]; !seen {
+			seenLeader[leader] = struct{}{}
+			if tpuSocket, ok := t.cache.peerNodes[leader]; ok {
 				peerLeaderNodes = append(peerLeaderNodes, tpuSocket)
 			}
 		}

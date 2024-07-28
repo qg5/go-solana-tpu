@@ -10,18 +10,17 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 
 	"github.com/blocto/solana-go-sdk/types"
+	"github.com/qg5/go-solana-tpu/literpc"
 	"github.com/qg5/go-solana-tpu/tpu"
 )
 
 func main() {
-	conn := rpc.New(rpc.DevNet_RPC) // NOTE: Devnet is used
-
-	tx, err := createExampleTransaction(conn, "")
+	tx, err := createExampleTransaction("")
 	if err != nil {
 		log.Fatalf("failed to create tx: %v", err)
 	}
 
-	tpuClient, err := tpu.New(conn, nil)
+	tpuClient, err := tpu.New(literpc.DevnetRPCURL, nil)
 	if err != nil {
 		log.Fatalf("failed to initialize tpu client: %v", err)
 	}
@@ -44,7 +43,9 @@ func main() {
 }
 
 // https://github.com/blocto/solana-go-sdk/tree/main/docs/_examples/client/send-tx
-func createExampleTransaction(conn *rpc.Client, privKeyBase58 string) (types.Transaction, error) {
+func createExampleTransaction(privKeyBase58 string) (types.Transaction, error) {
+	conn := rpc.New(literpc.DevnetRPCURL) // NOTE: Devnet is used
+
 	resp, err := conn.GetLatestBlockhash(context.Background(), rpc.CommitmentConfirmed)
 	if err != nil {
 		return types.Transaction{}, err

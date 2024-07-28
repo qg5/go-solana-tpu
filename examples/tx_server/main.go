@@ -19,24 +19,22 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gorilla/mux"
+	"github.com/qg5/go-solana-tpu/literpc"
 	"github.com/qg5/go-solana-tpu/tpu"
 )
 
 var (
-	port        string
-	rpcEndpoint string
+	port   string
+	rpcURL string
 )
 
 func main() {
 	flag.StringVar(&port, "port", "3333", "The port that the server will be runnning under")
-	flag.StringVar(&rpcEndpoint, "rpc", rpc.DevNet_RPC, "Rpc URL to connect to")
+	flag.StringVar(&rpcURL, "rpc", literpc.DevnetRPCURL, "Rpc URL to connect to")
 	flag.Parse()
 
-	conn := rpc.New(rpcEndpoint)
-
-	tpuClient, err := tpu.New(conn, nil)
+	tpuClient, err := tpu.New(rpcURL, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
