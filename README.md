@@ -4,7 +4,7 @@ A simple and efficient TPU (Transaction Processing Unit) client for Solana, util
 
 This program is designed to send a transaction directly to the current leader(s) instead of using RPC, thereby broadcasting the transaction more quickly
 
-## Life cycle of a transaction in Solana (RPC and TPU)
+## Lifecycle of a transaction in Solana (RPC and TPU)
 
 ![tx lifecycle](/docs/img/tx_lifecycle.png)
 
