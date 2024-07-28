@@ -4,6 +4,8 @@ A simple and efficient TPU (Transaction Processing Unit) client for Solana, util
 
 This is designed to send a transaction directly to the current leader(s) instead of using RPC, thereby broadcasting the transaction more quickly
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/qg5/go-solana-tpu.svg)](https://pkg.go.dev/github.com/qg5/go-solana-tpu)
+
 ## Lifecycle of a transaction in Solana (RPC and TPU)
 
 ![tx lifecycle](/docs/img/tx_lifecycle.png)
