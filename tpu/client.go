@@ -3,7 +3,6 @@ package tpu
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -17,11 +16,10 @@ import (
 
 var (
 	ErrNoLeadersFound         = errors.New("no leader found")
-	ErrFailedSimulation       = errors.New("simulation failed")
 	ErrMaxRetries             = errors.New("max retries were hit")
 	ErrInvalidCommitment      = errors.New("invalid commitment")
 	ErrMaxTxSize              = errors.New("transaction too big")
-	ErrMaxFanoutSlots         = errors.New("please use a lower number of fanout slots")
+	ErrMaxFanoutSlots         = errors.New("the fanout slots exceed the max (100)")
 	ErrUnsupportedTransaction = errors.New("this type of transaction is not supported")
 )
 
@@ -84,7 +82,7 @@ func New(rpcURL string, config *TPUClientConfig) (*TPUClient, error) {
 	rpc := literpc.New(rpcURL)
 
 	tpuClient := &TPUClient{
-		rpc:   rpc,
+		rpc:    rpc,
 		config: config,
 		cache: &TPUClientCache{
 			peerNodes: make(map[string]string),
@@ -203,7 +201,7 @@ func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 	if !t.config.SkipSimulation {
 		err := t.rpc.SimulateRawTransaction(serializedTx, t.config.Commitment)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrFailedSimulation, err)
+			return err
 		}
 	}
 
