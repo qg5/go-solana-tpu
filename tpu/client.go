@@ -30,19 +30,33 @@ type TPUClient struct {
 }
 
 type TPUClientConfig struct {
-	MaxFanoutSlots uint64             // The amount of slots that will be checked (default: 100)
-	MaxRetries     int                // The amount of attempts the program will do until it errors out (default: 5)
-	Commitment     rpc.CommitmentType // The commitment to be used for the RPC calls (default "confirmed")
-	SkipSimulation bool               // Whether to skip transaction simulation or not (default: false)
+	// The amount of slots that will be checked (default: 100)
+	MaxFanoutSlots uint64
+
+	// The amount of attempts the program will do until it errors out (default: 5)
+	MaxRetries int
+
+	// The commitment to be used for the RPC calls (default "confirmed")
+	Commitment rpc.CommitmentType
+
+	// Whether you want only nodes with a stake or not (default: false)
+	// This option is experimental as of now
+	OnlyStaked bool
+
+	// Whether to skip transaction simulation or not (default: false)
+	SkipSimulation bool
 }
 
 type TPUClientCache struct {
-	leaders      []string
-	leaderMap    map[string]string
-	slotsInEpoch uint64
+	peerLeaderNodes []string
+	peerNodes       map[string]string
+	stakedPeerNodes map[string]uint64
+	slotsInEpoch    uint64
 }
 
 // New creates a new tpu client and calls the Update method
+//
+// TPUClientConfig is configured with default values for maximum optimization.
 func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
 	if config == nil {
 		config = defaultTPUClientConfig()
@@ -56,8 +70,12 @@ func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
 		conn:   conn,
 		config: config,
 		cache: &TPUClientCache{
-			leaderMap: make(map[string]string),
+			peerNodes: make(map[string]string),
 		},
+	}
+
+	if tpuClient.config.OnlyStaked {
+		tpuClient.cache.stakedPeerNodes = make(map[string]uint64)
 	}
 
 	if err := tpuClient.Update(); err != nil {
@@ -71,8 +89,9 @@ func defaultTPUClientConfig() *TPUClientConfig {
 	return &TPUClientConfig{
 		MaxFanoutSlots: 100,
 		MaxRetries:     5,
-		SkipSimulation: false,
 		Commitment:     rpc.CommitmentConfirmed,
+		OnlyStaked:     true,
+		SkipSimulation: false,
 	}
 }
 
@@ -89,6 +108,18 @@ func validateCommitment(commitment rpc.CommitmentType) error {
 func (t *TPUClient) Update() error {
 	if err := t.getEpochInfo(); err != nil {
 		return err
+	}
+
+	if t.config.OnlyStaked {
+
+		accounts, err := t.conn.GetVoteAccounts(context.Background(), &rpc.GetVoteAccountsOpts{})
+		if err != nil {
+			return err
+		}
+
+		for _, current := range accounts.Current {
+			t.cache.stakedPeerNodes[current.NodePubkey.String()] = current.ActivatedStake
+		}
 	}
 
 	if err := t.getClusterNodes(); err != nil {
@@ -180,7 +211,7 @@ func (t *TPUClient) getLeaderSockets() error {
 	}
 
 	t.filterValidLeaders(slotLeaders)
-	if len(t.cache.leaders) == 0 {
+	if len(t.cache.peerLeaderNodes) == 0 {
 		return ErrNoLeadersFound
 	}
 
@@ -193,9 +224,21 @@ func (t *TPUClient) getClusterNodes() error {
 		return err
 	}
 
+	isStakedCheck := len(t.cache.stakedPeerNodes) != 0
+
 	for _, cluster := range clusters {
-		if cluster.TPUQUIC != nil {
-			t.cache.leaderMap[cluster.Pubkey.String()] = *cluster.TPUQUIC
+		if cluster.TPUQUIC == nil {
+			continue
+		}
+
+		clusterPubKey := cluster.Pubkey.String()
+
+		if isStakedCheck {
+			if _, ok := t.cache.stakedPeerNodes[clusterPubKey]; ok {
+				t.cache.peerNodes[clusterPubKey] = *cluster.TPUQUIC
+			}
+		} else {
+			t.cache.peerNodes[clusterPubKey] = *cluster.TPUQUIC
 		}
 	}
 
@@ -211,7 +254,7 @@ func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	for _, leaderAddr := range t.cache.leaders {
+	for _, leaderAddr := range t.cache.peerLeaderNodes {
 		wg.Add(1)
 
 		go func(addr string) {
@@ -247,7 +290,7 @@ func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) {
 		leaderString := leader.String()
 		if _, exists := seenLeader[leaderString]; !exists {
 			seenLeader[leaderString] = struct{}{}
-			if tpuSocket, ok := t.cache.leaderMap[leaderString]; ok {
+			if tpuSocket, ok := t.cache.peerNodes[leaderString]; ok {
 				leaderTPUSockets = append(leaderTPUSockets, tpuSocket)
 			}
 		}
@@ -258,5 +301,5 @@ func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) {
 		}
 	}
 
-	t.cache.leaders = leaderTPUSockets
+	t.cache.peerLeaderNodes = leaderTPUSockets
 }
