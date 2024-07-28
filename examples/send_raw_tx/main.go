@@ -41,7 +41,7 @@ func main() {
 
 // https://github.com/blocto/solana-go-sdk/tree/main/docs/_examples/client/send-tx
 func createExampleTransaction(conn *rpc.Client, privKeyBase58 string) (types.Transaction, error) {
-	resp, err := conn.GetLatestBlockhash(context.Background(), rpc.CommitmentFinalized)
+	resp, err := conn.GetLatestBlockhash(context.Background(), rpc.CommitmentConfirmed)
 	if err != nil {
 		return types.Transaction{}, err
 	}
