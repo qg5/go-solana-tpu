@@ -13,7 +13,7 @@ type SimulateTransactionValue struct {
 	Err interface{} `json:"err,omitempty"`
 }
 
-func (client *LiteRpcClient) SimulateTransaction(transaction, commitment string) error {
+func (client *Client) SimulateTransaction(transaction, commitment string) error {
 	params := []interface{}{
 		transaction,
 		map[string]string{"encoding": "base64", "commitment": commitment},
@@ -31,7 +31,7 @@ func (client *LiteRpcClient) SimulateTransaction(transaction, commitment string)
 	return nil
 }
 
-func (client *LiteRpcClient) SimulateRawTransaction(serializedTx []byte, commitment string) error {
+func (client *Client) SimulateRawTransaction(serializedTx []byte, commitment string) error {
 	encoded := base64.StdEncoding.EncodeToString(serializedTx)
 	return client.SimulateTransaction(encoded, commitment)
 }

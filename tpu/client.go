@@ -41,7 +41,7 @@ const (
 )
 
 type TPUClient struct {
-	conn   *literpc.LiteRpcClient
+	rpc    *literpc.Client
 	config *TPUClientConfig
 	cache  *TPUClientCache
 	mu     sync.Mutex
@@ -77,14 +77,14 @@ func New(rpcURL string, config *TPUClientConfig) (*TPUClient, error) {
 		return nil, ErrMaxFanoutSlots
 	}
 
-	conn := literpc.New(rpcURL)
-
 	if err := validateCommitment(config.Commitment); err != nil {
 		return nil, err
 	}
 
+	rpc := literpc.New(rpcURL)
+
 	tpuClient := &TPUClient{
-		conn:   conn,
+		rpc:   rpc,
 		config: config,
 		cache: &TPUClientCache{
 			peerNodes: make(map[string]string),
@@ -201,7 +201,7 @@ func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 	}
 
 	if !t.config.SkipSimulation {
-		err := t.conn.SimulateRawTransaction(serializedTx, t.config.Commitment)
+		err := t.rpc.SimulateRawTransaction(serializedTx, t.config.Commitment)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrFailedSimulation, err)
 		}
@@ -215,7 +215,7 @@ func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 }
 
 func (t *TPUClient) getEpochInfo() error {
-	epochInfo, err := t.conn.GetEpochInfo(t.config.Commitment)
+	epochInfo, err := t.rpc.GetEpochInfo(t.config.Commitment)
 	if err != nil {
 		return err
 	}
@@ -226,7 +226,7 @@ func (t *TPUClient) getEpochInfo() error {
 
 func (t *TPUClient) getLeaderSockets() error {
 	fanout := math.Min(float64(2*t.config.FanoutSlots), float64(t.cache.slotsInEpoch))
-	slotLeaders, err := t.conn.GetSlotLeaders(t.cache.GetCurrentSlot(), uint64(fanout))
+	slotLeaders, err := t.rpc.GetSlotLeaders(t.cache.GetCurrentSlot(), uint64(fanout))
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func (t *TPUClient) getLeaderSockets() error {
 }
 
 func (t *TPUClient) getClusterNodes() error {
-	clusters, err := t.conn.GetClusterNodes()
+	clusters, err := t.rpc.GetClusterNodes()
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func (t *TPUClient) getClusterNodes() error {
 }
 
 func (t *TPUClient) getStakedNodes() error {
-	accounts, err := t.conn.GetVoteAccounts()
+	accounts, err := t.rpc.GetVoteAccounts()
 	if err != nil {
 		return err
 	}
@@ -320,7 +320,7 @@ func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 }
 
 func (t *TPUClient) startSlotUpdates() error {
-	startSlot, err := t.conn.GetSlot(t.config.Commitment)
+	startSlot, err := t.rpc.GetSlot(t.config.Commitment)
 	if err != nil {
 		return err
 	}

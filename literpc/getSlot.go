@@ -1,6 +1,6 @@
 package literpc
 
-func (client *LiteRpcClient) GetSlot(commitment string) (uint64, error) {
+func (client *Client) GetSlot(commitment string) (uint64, error) {
 	params := []interface{}{
 		map[string]string{"commitment": commitment},
 	}

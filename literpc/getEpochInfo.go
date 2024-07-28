@@ -4,7 +4,7 @@ type GetEpochInfoResult struct {
 	SlotsInEpoch uint64 `json:"slotsInEpoch"`
 }
 
-func (client *LiteRpcClient) GetEpochInfo(commitment string) (GetEpochInfoResult, error) {
+func (client *Client) GetEpochInfo(commitment string) (GetEpochInfoResult, error) {
 	params := []interface{}{
 		map[string]string{"commitment": commitment},
 	}

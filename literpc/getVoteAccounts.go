@@ -9,7 +9,7 @@ type GetVoteAccounts struct {
 	Current []VoteAccounts `json:"current"`
 }
 
-func (client *LiteRpcClient) GetVoteAccounts() (GetVoteAccounts, error) {
+func (client *Client) GetVoteAccounts() (GetVoteAccounts, error) {
 	var response GetVoteAccounts
 	if err := client.call("getVoteAccounts", nil, &response); err != nil {
 		return GetVoteAccounts{}, err
