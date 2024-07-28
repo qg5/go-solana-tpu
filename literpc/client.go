@@ -13,12 +13,12 @@ const (
 	TestnetRPCURL     = "https://api.testnet.solana.com"
 )
 
-type LiteRpcClient struct {
+type Client struct {
 	endpoint string
 }
 
-func New(endpoint string) *LiteRpcClient {
-	return &LiteRpcClient{
+func New(endpoint string) *Client {
+	return &Client{
 		endpoint: endpoint,
 	}
 }
@@ -29,7 +29,7 @@ type JsonRPCResponse struct {
 	Result  json.RawMessage `json:"result"`
 }
 
-func (client *LiteRpcClient) call(method string, params interface{}, result interface{}) error {
+func (client *Client) call(method string, params interface{}, result interface{}) error {
 	payload, err := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "1",
