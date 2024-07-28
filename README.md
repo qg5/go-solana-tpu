@@ -2,7 +2,7 @@
 
 A simple and efficient TPU (Transaction Processing Unit) client for Solana, utilizing the QUIC protocol for data transmission
 
-This program is designed to send a transaction straight to the current leader(s) instead of the RPC
+This program is designed to send a transaction directly to the current leader(s) instead of using RPC, thereby broadcasting the transaction more quickly
 
 ## Life cycle of a transaction in Solana (RPC and TPU)
 
