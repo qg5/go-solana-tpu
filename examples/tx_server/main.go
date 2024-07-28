@@ -6,6 +6,10 @@ package main
    {
    	"tx": "<base64_encoded_tx>"
    }
+
+   200 = success
+   400 = malformed request
+   500 = transaction failed to be sent
 */
 
 import (

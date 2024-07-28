@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -29,6 +30,13 @@ func main() {
 
 	signature, err := tpuClient.SendTransaction(tx)
 	if err != nil {
+		if errors.Is(err, tpu.ErrMaxRetries) {
+			// Sometimes this error can happen even if the transaction was successful
+			// Perhaps call 'getsignaturestatuses' (https://solana.com/docs/rpc/http/getsignaturestatuses)
+			fmt.Println("Transaction sent (?):", signature)
+			return
+		}
+
 		log.Fatalf("failed to send tx: %v", err)
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -32,11 +33,20 @@ func main() {
 
 	// You may call tpuClient.Update() if you want to retrieve the latest values from the RPC
 
+	signature := base58.Encode(tx.Signatures[0])
+
 	if err := tpuClient.SendRawTransaction(txSerialized); err != nil {
+		if errors.Is(err, tpu.ErrMaxRetries) {
+			// Sometimes this error can happen even if the transaction was successful
+			// Perhaps call 'getsignaturestatuses' (https://solana.com/docs/rpc/http/getsignaturestatuses)
+			fmt.Println("Transaction sent (?):", signature)
+			return
+		}
+
 		log.Fatalf("failed to send tx: %v", err)
 	}
 
-	fmt.Println("Transaction sent:", base58.Encode(tx.Signatures[0]))
+	fmt.Println("Transaction sent:", signature)
 }
 
 // https://github.com/blocto/solana-go-sdk/tree/main/docs/_examples/client/send-tx

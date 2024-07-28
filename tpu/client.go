@@ -3,8 +3,8 @@ package tpu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
-	"net"
 	"sync"
 
 	"github.com/blocto/solana-go-sdk/types"
@@ -12,6 +12,14 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/mr-tron/base58"
 	"github.com/qg5/go-solana-tpu/quic"
+)
+
+var (
+	ErrNoLeadersFound         = errors.New("no leader found")
+	ErrFailedSimulation       = errors.New("simulation failed")
+	ErrMaxRetries             = errors.New("max retries were hit")
+	ErrInvalidCommitment      = errors.New("invalid commitment")
+	ErrUnsupportedTransaction = errors.New("this type of transaction is not supported")
 )
 
 type TPUClient struct {
@@ -22,21 +30,17 @@ type TPUClient struct {
 }
 
 type TPUClientConfig struct {
-	MaxFanoutSlots uint64 // (default: 100)
-	MaxRetries     int    // (default: 5)
+	MaxFanoutSlots uint64             // The amount of slots that will be checked (default: 100)
+	MaxRetries     int                // The amount of attempts the program will do until it errors out (default: 5)
+	Commitment     rpc.CommitmentType // The commitment to be used for the RPC calls (default "confirmed")
+	SkipSimulation bool               // Whether to skip transaction simulation or not (default: false)
 }
 
 type TPUClientCache struct {
-	leaders      []*net.UDPAddr
-	leaderMap    map[string]*net.UDPAddr
+	leaders      []string
+	leaderMap    map[string]string
 	slotsInEpoch uint64
 }
-
-var (
-	ErrNoLeadersFound         = errors.New("no leader found")
-	ErrMaxRetries             = errors.New("max retries were hit")
-	ErrUnsupportedTransaction = errors.New("this type of transaction is not supported")
-)
 
 // New creates a new tpu client and calls the Update method
 func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
@@ -44,11 +48,15 @@ func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
 		config = defaultTPUClientConfig()
 	}
 
+	if err := validateCommitment(config.Commitment); err != nil {
+		return nil, err
+	}
+
 	tpuClient := &TPUClient{
 		conn:   conn,
 		config: config,
 		cache: &TPUClientCache{
-			leaderMap: make(map[string]*net.UDPAddr),
+			leaderMap: make(map[string]string),
 		},
 	}
 
@@ -63,6 +71,17 @@ func defaultTPUClientConfig() *TPUClientConfig {
 	return &TPUClientConfig{
 		MaxFanoutSlots: 100,
 		MaxRetries:     5,
+		SkipSimulation: false,
+		Commitment:     rpc.CommitmentConfirmed,
+	}
+}
+
+func validateCommitment(commitment rpc.CommitmentType) error {
+	switch commitment {
+	case "processed", "confirmed", "finalized":
+		return nil
+	default:
+		return ErrInvalidCommitment
 	}
 }
 
@@ -117,6 +136,20 @@ func (t *TPUClient) SendTransaction(tx any) (string, error) {
 
 // SendRawTransaction sends a raw transaction to the tpu client
 func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
+	if !t.config.SkipSimulation {
+		out, err := t.conn.SimulateRawTransactionWithOpts(context.Background(), serializedTx, &rpc.SimulateTransactionOpts{
+			Commitment: t.config.Commitment,
+		})
+
+		if out.Value.Err != nil {
+			return fmt.Errorf("%w: %v", ErrFailedSimulation, out.Value.Err)
+		}
+
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrFailedSimulation, err)
+		}
+	}
+
 	if err := t.getLeaderSockets(); err != nil {
 		return err
 	}
@@ -125,7 +158,7 @@ func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 }
 
 func (t *TPUClient) getEpochInfo() error {
-	epochInfo, err := t.conn.GetEpochInfo(context.Background(), rpc.CommitmentConfirmed)
+	epochInfo, err := t.conn.GetEpochInfo(context.Background(), t.config.Commitment)
 	if err != nil {
 		return err
 	}
@@ -135,7 +168,7 @@ func (t *TPUClient) getEpochInfo() error {
 }
 
 func (t *TPUClient) getLeaderSockets() error {
-	startSlot, err := t.conn.GetSlot(context.Background(), rpc.CommitmentConfirmed)
+	startSlot, err := t.conn.GetSlot(context.Background(), t.config.Commitment)
 	if err != nil {
 		return err
 	}
@@ -162,19 +195,14 @@ func (t *TPUClient) getClusterNodes() error {
 
 	for _, cluster := range clusters {
 		if cluster.TPUQUIC != nil {
-			addr, err := net.ResolveUDPAddr("udp", *cluster.TPUQUIC)
-			if err != nil {
-				continue
-			}
-
-			t.cache.leaderMap[cluster.Pubkey.String()] = addr
+			t.cache.leaderMap[cluster.Pubkey.String()] = *cluster.TPUQUIC
 		}
 	}
 
 	return nil
 }
 
-func (t *TPUClient) sendRawTransaction(txBytes []byte) error {
+func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 	var (
 		wg             sync.WaitGroup
 		currentRetries int
@@ -186,10 +214,10 @@ func (t *TPUClient) sendRawTransaction(txBytes []byte) error {
 	for _, leaderAddr := range t.cache.leaders {
 		wg.Add(1)
 
-		go func(addr *net.UDPAddr) {
+		go func(addr string) {
 			defer wg.Done()
 
-			err := quic.SendTransaction(ctx, addr.String(), txBytes)
+			err := quic.SendTransaction(ctx, addr, serializedTx)
 			if err != nil {
 				currentRetries++
 			}
@@ -212,7 +240,7 @@ func (t *TPUClient) sendRawTransaction(txBytes []byte) error {
 
 func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) {
 	seenLeader := make(map[string]struct{})
-	var leaderTPUSockets []*net.UDPAddr
+	var leaderTPUSockets []string
 	checkedSlots := 0
 
 	for _, leader := range slotLeaders {
