@@ -90,7 +90,7 @@ func defaultTPUClientConfig() *TPUClientConfig {
 		MaxFanoutSlots: 100,
 		MaxRetries:     5,
 		Commitment:     rpc.CommitmentConfirmed,
-		OnlyStaked:     true,
+		OnlyStaked:     false,
 		SkipSimulation: false,
 	}
 }
