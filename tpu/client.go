@@ -192,7 +192,7 @@ func (t *TPUClient) SendTransaction(tx any) (string, error) {
 	return signature, nil
 }
 
-// SendRawTransaction sends a raw transaction to the tpu client
+// SendRawTransaction sends a raw transaction to the leaders
 func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
 	if len(serializedTx) > MAX_TX_SIZE {
 		return ErrMaxTxSize
