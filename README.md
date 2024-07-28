@@ -18,6 +18,11 @@ go get -u github.com/qg5/go-solana-tpu/tpu
 
 Browse the [examples folder](/examples) to see how you can use this package
 
+## Considerations
+
+1. **Frequent Updates**: The package is stable and functional, but it's still under active development. Expect frequent updates as new features are added and improvements are made
+2. **TPU and Transaction speed**: Using TPU while still mishandling fees will not get your transaction included in the block faster
+
 ## Alternatives
 
 - [Typescript TPU Client](https://github.com/lmvdz/tpu-client)
