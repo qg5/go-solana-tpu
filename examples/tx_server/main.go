@@ -1,5 +1,13 @@
 package main
 
+// Especially useful if you don't use Go as a main to create transactions
+/*
+   POST /send-tx
+   {
+   	"tx": "<base64_encoded_tx>"
+   }
+*/
+
 import (
 	"encoding/base64"
 	"encoding/json"
