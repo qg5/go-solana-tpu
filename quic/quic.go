@@ -27,14 +27,16 @@ func createTlsConfig() (*tls.Config, error) {
 	}, nil
 }
 
-// SendTransaction send a serialized transaction to the given address using QUIC.
+// SendTransaction send a serialized transaction to the given address using QUIC
 func SendTransaction(ctx context.Context, addr string, serializedTx []byte) error {
 	tlsConfig, err := createTlsConfig()
 	if err != nil {
 		return err
 	}
 
-	conn, err := quic.DialAddr(ctx, addr, tlsConfig, &quic.Config{MaxIdleTimeout: 10 * time.Second})
+	conn, err := quic.DialAddr(ctx, addr, tlsConfig, &quic.Config{
+		MaxIdleTimeout: 30 * time.Second,
+	})
 	if err != nil {
 		return err
 	}

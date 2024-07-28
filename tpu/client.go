@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/blocto/solana-go-sdk/types"
 	"github.com/gagliardetto/solana-go"
@@ -19,21 +20,40 @@ var (
 	ErrFailedSimulation       = errors.New("simulation failed")
 	ErrMaxRetries             = errors.New("max retries were hit")
 	ErrInvalidCommitment      = errors.New("invalid commitment")
+	ErrMaxTxSize              = errors.New("transaction too big")
+	ErrMaxFanoutSlots         = errors.New("please use a lower number of fanout slots")
 	ErrUnsupportedTransaction = errors.New("this type of transaction is not supported")
+)
+
+const (
+	// Maximum number of slots used to build TPU socket fanout set.
+	// https://github.com/solana-labs/solana/blob/27eff8408b7223bb3c4ab70523f8a8dca3ca6645/tpu-client/src/tpu_client.rs#L39
+	MAX_FANOUT_SLOTS = 100
+
+	// Defines the maximum transaction size that can be sent.
+	// https://github.com/solana-labs/solana/blob/master/sdk/src/packet.rs#L21
+	MAX_TX_SIZE = 1232
+
+	// This defines how long a new slot takes to appear, by default Solana has a new one created every 400ms
+	DEFAULT_SLOT_CREATION_INTERVAL = 400 * time.Millisecond
+
+	DEFAULT_FANOUT_SLOTS = 12
 )
 
 type TPUClient struct {
 	conn   *rpc.Client
 	config *TPUClientConfig
-
-	cache *TPUClientCache
+	cache  *TPUClientCache
+	mu     sync.Mutex
 }
 
 type TPUClientConfig struct {
-	// The amount of slots that will be checked (default: 100)
-	MaxFanoutSlots uint64
+	// The range of upcoming slots to include when determining which
+	// leaders to send transactions to (default: 12, max: 100)
+	FanoutSlots int
 
 	// The amount of attempts the program will do until it errors out (default: 5)
+	// You can set the value to 0 to remove the retry limit
 	MaxRetries int
 
 	// The commitment to be used for the RPC calls (default "confirmed")
@@ -47,19 +67,14 @@ type TPUClientConfig struct {
 	SkipSimulation bool
 }
 
-type TPUClientCache struct {
-	peerLeaderNodes []string
-	peerNodes       map[string]string
-	stakedPeerNodes map[string]uint64
-	slotsInEpoch    uint64
-}
-
 // New creates a new tpu client and calls the Update method
 //
 // TPUClientConfig is configured with default values for maximum optimization.
 func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
-	if config == nil {
-		config = defaultTPUClientConfig()
+	config = populateConfig(config)
+
+	if config.FanoutSlots > MAX_FANOUT_SLOTS {
+		return nil, ErrMaxFanoutSlots
 	}
 
 	if err := validateCommitment(config.Commitment); err != nil {
@@ -78,6 +93,8 @@ func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
 		tpuClient.cache.stakedPeerNodes = make(map[string]uint64)
 	}
 
+	go tpuClient.startSlotUpdates()
+
 	if err := tpuClient.Update(); err != nil {
 		return nil, err
 	}
@@ -85,9 +102,25 @@ func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
 	return tpuClient, nil
 }
 
-func defaultTPUClientConfig() *TPUClientConfig {
+func populateConfig(config *TPUClientConfig) *TPUClientConfig {
+	if config == nil {
+		return defaultConfig()
+	}
+
+	if config.FanoutSlots == 0 {
+		config.FanoutSlots = DEFAULT_FANOUT_SLOTS
+	}
+
+	if config.Commitment == "" {
+		config.Commitment = rpc.CommitmentConfirmed
+	}
+
+	return config
+}
+
+func defaultConfig() *TPUClientConfig {
 	return &TPUClientConfig{
-		MaxFanoutSlots: 100,
+		FanoutSlots:    DEFAULT_FANOUT_SLOTS,
 		MaxRetries:     5,
 		Commitment:     rpc.CommitmentConfirmed,
 		OnlyStaked:     false,
@@ -111,13 +144,8 @@ func (t *TPUClient) Update() error {
 	}
 
 	if t.config.OnlyStaked {
-		accounts, err := t.conn.GetVoteAccounts(context.Background(), &rpc.GetVoteAccountsOpts{})
-		if err != nil {
+		if err := t.getStakedNodes(); err != nil {
 			return err
-		}
-
-		for _, current := range accounts.Current {
-			t.cache.stakedPeerNodes[current.NodePubkey.String()] = current.ActivatedStake
 		}
 	}
 
@@ -166,6 +194,10 @@ func (t *TPUClient) SendTransaction(tx any) (string, error) {
 
 // SendRawTransaction sends a raw transaction to the tpu client
 func (t *TPUClient) SendRawTransaction(serializedTx []byte) error {
+	if len(serializedTx) > MAX_TX_SIZE {
+		return ErrMaxTxSize
+	}
+
 	if !t.config.SkipSimulation {
 		out, err := t.conn.SimulateRawTransactionWithOpts(context.Background(), serializedTx, &rpc.SimulateTransactionOpts{
 			Commitment: t.config.Commitment,
@@ -198,18 +230,13 @@ func (t *TPUClient) getEpochInfo() error {
 }
 
 func (t *TPUClient) getLeaderSockets() error {
-	startSlot, err := t.conn.GetSlot(context.Background(), t.config.Commitment)
+	fanout := math.Min(float64(2*t.config.FanoutSlots), float64(t.cache.slotsInEpoch))
+	slotLeaders, err := t.conn.GetSlotLeaders(context.Background(), t.cache.GetCurrentSlot(), uint64(fanout))
 	if err != nil {
 		return err
 	}
 
-	fanout := uint64(math.Min(float64(2*t.config.MaxFanoutSlots), float64(t.cache.slotsInEpoch)))
-	slotLeaders, err := t.conn.GetSlotLeaders(context.Background(), startSlot, fanout)
-	if err != nil {
-		return err
-	}
-
-	t.filterValidLeaders(slotLeaders)
+	t.cache.peerLeaderNodes = t.filterValidLeaders(slotLeaders)
 	if len(t.cache.peerLeaderNodes) == 0 {
 		return ErrNoLeadersFound
 	}
@@ -244,11 +271,28 @@ func (t *TPUClient) getClusterNodes() error {
 	return nil
 }
 
+func (t *TPUClient) getStakedNodes() error {
+	accounts, err := t.conn.GetVoteAccounts(context.Background(), &rpc.GetVoteAccountsOpts{})
+	if err != nil {
+		return err
+	}
+
+	for _, current := range accounts.Current {
+		t.cache.stakedPeerNodes[current.NodePubkey.String()] = current.ActivatedStake
+	}
+
+	return nil
+}
+
 func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 	var (
 		wg             sync.WaitGroup
 		currentRetries int
 	)
+
+	if t.config.MaxRetries == 0 {
+		t.config.MaxRetries = len(t.cache.peerLeaderNodes) + 1
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -258,21 +302,21 @@ func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 
 		go func(addr string) {
 			defer wg.Done()
-
-			err := quic.SendTransaction(ctx, addr, serializedTx)
-			if err != nil {
+			if quic.SendTransaction(ctx, addr, serializedTx) != nil {
+				t.mu.Lock()
 				currentRetries++
+				t.mu.Unlock()
 			}
 
+			t.mu.Lock()
 			if currentRetries > t.config.MaxRetries {
 				cancel()
 			}
-
+			t.mu.Unlock()
 		}(leaderAddr)
 	}
 
 	wg.Wait()
-
 	if currentRetries > t.config.MaxRetries {
 		return ErrMaxRetries
 	}
@@ -280,25 +324,43 @@ func (t *TPUClient) sendRawTransaction(serializedTx []byte) error {
 	return nil
 }
 
-func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) {
-	seenLeader := make(map[string]struct{})
-	var leaderTPUSockets []string
-	checkedSlots := 0
+func (t *TPUClient) startSlotUpdates() error {
+	startSlot, err := t.conn.GetSlot(context.Background(), t.config.Commitment)
+	if err != nil {
+		return err
+	}
 
-	for _, leader := range slotLeaders {
-		leaderString := leader.String()
-		if _, exists := seenLeader[leaderString]; !exists {
-			seenLeader[leaderString] = struct{}{}
-			if tpuSocket, ok := t.cache.peerNodes[leaderString]; ok {
-				leaderTPUSockets = append(leaderTPUSockets, tpuSocket)
-			}
+	t.cache.SetCurrentSlot(startSlot)
+	incrementedSlot := startSlot
+
+	ticker := time.NewTicker(DEFAULT_SLOT_CREATION_INTERVAL)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		incrementedSlot++
+		t.cache.SetCurrentSlot(incrementedSlot)
+	}
+
+	return nil
+}
+
+func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) []string {
+	var peerLeaderNodes []string
+	seenLeader := make(map[string]struct{}, len(slotLeaders))
+
+	for i, leader := range slotLeaders {
+		if i >= t.config.FanoutSlots {
+			break
 		}
 
-		checkedSlots++
-		if checkedSlots >= int(t.config.MaxFanoutSlots) {
-			break
+		leaderString := leader.String()
+		if _, seen := seenLeader[leaderString]; !seen {
+			seenLeader[leaderString] = struct{}{}
+			if tpuSocket, ok := t.cache.peerNodes[leaderString]; ok {
+				peerLeaderNodes = append(peerLeaderNodes, tpuSocket)
+			}
 		}
 	}
 
-	t.cache.peerLeaderNodes = leaderTPUSockets
+	return peerLeaderNodes
 }
