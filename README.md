@@ -1,6 +1,6 @@
 # Solana TPU Client
 
-A simple and efficient TPU (Transaction Processing Unit) client for Solana, utilizing the QUIC protocol for data transmission
+A simple and efficient TPU ([Transaction Processing Unit](https://docs.solanalabs.com/validator/tpu)) client for Solana, utilizing the QUIC protocol for data transmission
 
 This is designed to send a transaction directly to the current leader(s) instead of using RPC, thereby broadcasting the transaction more quickly
 
