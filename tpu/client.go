@@ -111,7 +111,6 @@ func (t *TPUClient) Update() error {
 	}
 
 	if t.config.OnlyStaked {
-
 		accounts, err := t.conn.GetVoteAccounts(context.Background(), &rpc.GetVoteAccountsOpts{})
 		if err != nil {
 			return err
