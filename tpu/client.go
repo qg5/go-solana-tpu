@@ -22,8 +22,8 @@ type TPUClient struct {
 }
 
 type TPUClientConfig struct {
-	maxFanoutSlots uint64 // (default: 100)
-	maxRetries     int    // (default: 5)
+	MaxFanoutSlots uint64 // (default: 100)
+	MaxRetries     int    // (default: 5)
 }
 
 type TPUClientCache struct {
@@ -61,8 +61,8 @@ func New(conn *rpc.Client, config *TPUClientConfig) (*TPUClient, error) {
 
 func defaultTPUClientConfig() *TPUClientConfig {
 	return &TPUClientConfig{
-		maxFanoutSlots: 100,
-		maxRetries:     5,
+		MaxFanoutSlots: 100,
+		MaxRetries:     5,
 	}
 }
 
@@ -140,7 +140,7 @@ func (t *TPUClient) getLeaderSockets() error {
 		return err
 	}
 
-	fanout := uint64(math.Min(float64(2*t.config.maxFanoutSlots), float64(t.cache.slotsInEpoch)))
+	fanout := uint64(math.Min(float64(2*t.config.MaxFanoutSlots), float64(t.cache.slotsInEpoch)))
 	slotLeaders, err := t.conn.GetSlotLeaders(context.Background(), startSlot, fanout)
 	if err != nil {
 		return err
@@ -194,7 +194,7 @@ func (t *TPUClient) sendRawTransaction(txBytes []byte) error {
 				currentRetries++
 			}
 
-			if currentRetries > t.config.maxRetries {
+			if currentRetries > t.config.MaxRetries {
 				cancel()
 			}
 
@@ -203,7 +203,7 @@ func (t *TPUClient) sendRawTransaction(txBytes []byte) error {
 
 	wg.Wait()
 
-	if currentRetries > t.config.maxRetries {
+	if currentRetries > t.config.MaxRetries {
 		return ErrMaxRetries
 	}
 
@@ -225,7 +225,7 @@ func (t *TPUClient) filterValidLeaders(slotLeaders []solana.PublicKey) {
 		}
 
 		checkedSlots++
-		if checkedSlots >= int(t.config.maxFanoutSlots) {
+		if checkedSlots >= int(t.config.MaxFanoutSlots) {
 			break
 		}
 	}
