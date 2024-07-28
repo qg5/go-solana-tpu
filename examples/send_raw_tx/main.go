@@ -1,0 +1,70 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/blocto/solana-go-sdk/program/system"
+	"github.com/blocto/solana-go-sdk/types"
+	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/mr-tron/base58"
+	"github.com/qg5/go-solana-tpu/tpu"
+)
+
+func main() {
+	conn := rpc.New(rpc.DevNet.RPC) // NOTE: Devnet is used
+
+	tx, err := createExampleTransaction(conn, "")
+	if err != nil {
+		log.Fatalf("failed to create tx: %v", err)
+	}
+
+	txSerialized, err := tx.Serialize()
+	if err != nil {
+		log.Fatalf("failed to serialize tx: %v", err)
+	}
+
+	tpuClient, err := tpu.New(conn, nil)
+	if err != nil {
+		log.Fatalf("failed to initialize tpu client: %v", err)
+	}
+
+	// You may call tpuClient.Update() if you want to retrieve the latest values from the RPC
+
+	if err := tpuClient.SendRawTransaction(txSerialized); err != nil {
+		log.Fatalf("failed to send tx: %v", err)
+	}
+
+	fmt.Println("Transaction sent:", base58.Encode(tx.Signatures[0]))
+}
+
+// https://github.com/blocto/solana-go-sdk/tree/main/docs/_examples/client/send-tx
+func createExampleTransaction(conn *rpc.Client, privKeyBase58 string) (types.Transaction, error) {
+	resp, err := conn.GetLatestBlockhash(context.Background(), rpc.CommitmentFinalized)
+	if err != nil {
+		return types.Transaction{}, err
+	}
+
+	feePayer, _ := types.AccountFromBase58(privKeyBase58)
+
+	tx, err := types.NewTransaction(types.NewTransactionParam{
+		Message: types.NewMessage(types.NewMessageParam{
+			FeePayer:        feePayer.PublicKey,
+			RecentBlockhash: resp.Value.Blockhash.String(),
+			Instructions: []types.Instruction{
+				system.Transfer(system.TransferParam{
+					From:   feePayer.PublicKey,
+					To:     feePayer.PublicKey,
+					Amount: 1,
+				}),
+			},
+		}),
+		Signers: []types.Account{feePayer},
+	})
+	if err != nil {
+		return types.Transaction{}, err
+	}
+
+	return tx, nil
+}
