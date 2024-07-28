@@ -12,6 +12,10 @@ This is designed to send a transaction directly to the current leader(s) instead
 
 ## Usage
 
+```
+go get -u github.com/qg5/go-solana-tpu/tpu
+```
+
 Browse the [examples folder](/examples) to see how you can use this package
 
 ## Alternatives
