@@ -11,3 +11,8 @@ This program is designed to send a transaction straight to the current leader(s)
 ## Usage
 
 Browse the [examples folder](/examples) to see how you can use this package
+
+## Alternatives
+
+- [Typescript TPU Client](https://github.com/lmvdz/tpu-client)
+- [Rust TPU Client](https://crates.io/crates/solana-tpu-client)
